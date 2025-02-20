@@ -535,32 +535,41 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         except Exception as e:
             await app.edit_message_text(sender, edit_id, f'Failed to save: `{msg_link}`\n\nError: {str(e)}')
 
+# ----- Modified copy_message_with_chat_id for public groups -----
 async def copy_message_with_chat_id(client, sender, chat_id, message_id):
     target_chat_id = user_chat_ids.get(sender, sender)
     try:
         msg = await client.get_messages(chat_id, message_id)
         custom_caption = get_user_caption_preference(sender)
-        original_caption = msg.caption if msg.caption else ''
-        final_caption = f"{original_caption}" if custom_caption else f"{original_caption}"
-        delete_words = load_delete_words(sender)
-        for word in delete_words:
-            final_caption = final_caption.replace(word, '  ')
-        replacements = load_replacement_words(sender)
-        for word, replace_word in replacements.items():
-            final_caption = final_caption.replace(word, replace_word)
-        caption = f"{final_caption}\n\n__**{custom_caption}**__" if custom_caption else f"{final_caption}"
-        # --- Modified branch: forward message if empty ---
-        if msg.media:
-            if msg.media == MessageMediaType.VIDEO:
-                result = await client.send_video(target_chat_id, msg.video.file_id, caption=caption)
-            elif msg.media == MessageMediaType.DOCUMENT:
-                result = await client.send_document(target_chat_id, msg.document.file_id, caption=caption)
-            elif msg.media == MessageMediaType.PHOTO:
-                result = await client.send_photo(target_chat_id, msg.photo.file_id, caption=caption)
+        original_caption = msg.caption if msg.caption else (msg.text if msg.text else '')
+        final_caption = f"{original_caption}\n\n__**{custom_caption}**__" if custom_caption else original_caption
+        # If chat_id is a string (i.e. a public group) use manual download & reupload
+        if isinstance(chat_id, str):
+            if msg.media:
+                file = await client.download_media(msg)
+                if msg.media == MessageMediaType.VIDEO:
+                    result = await client.send_video(target_chat_id, file, caption=final_caption)
+                elif msg.media == MessageMediaType.DOCUMENT:
+                    result = await client.send_document(target_chat_id, file, caption=final_caption)
+                elif msg.media == MessageMediaType.PHOTO:
+                    result = await client.send_photo(target_chat_id, file, caption=final_caption)
+                else:
+                    result = await client.send_document(target_chat_id, file, caption=final_caption)
+            else:
+                result = await client.send_message(target_chat_id, msg.text, parse_mode="markdown")
+        else:
+            # For private groups, use the original logic
+            if msg.media:
+                if msg.media == MessageMediaType.VIDEO:
+                    result = await client.send_video(target_chat_id, msg.video.file_id, caption=final_caption)
+                elif msg.media == MessageMediaType.DOCUMENT:
+                    result = await client.send_document(target_chat_id, msg.document.file_id, caption=final_caption)
+                elif msg.media == MessageMediaType.PHOTO:
+                    result = await client.send_photo(target_chat_id, msg.photo.file_id, caption=final_caption)
+                else:
+                    result = await client.forward_messages(target_chat_id, chat_id, message_id)
             else:
                 result = await client.forward_messages(target_chat_id, chat_id, message_id)
-        else:
-            result = await client.forward_messages(target_chat_id, chat_id, message_id)
         try:
             await result.copy(LOG_GROUP)
         except Exception:
@@ -574,6 +583,7 @@ async def copy_message_with_chat_id(client, sender, chat_id, message_id):
         error_message = f"Error occurred while sending message to chat ID {target_chat_id}: {str(e)}"
         await client.send_message(sender, error_message)
         await client.send_message(sender, f"Make Bot admin in your Channel - {target_chat_id} and restart the process after /cancel")
+# -----------------------------------------------------------------
 
 user_states = {}
 user_chat_ids = {}
