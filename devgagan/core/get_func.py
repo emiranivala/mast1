@@ -87,12 +87,12 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     round_message = False
     if "?single" in msg_link:
         msg_link = msg_link.split("?single")[0]
-    # ---- MODIFIED MESSAGE ID EXTRACTION ----
+    # ---- Modified message id extraction ----
     parts = msg_link.split("/")
     if len(parts) == 6:
-        # For links like https://t.me/unlockedskills/234/326,
-        # use the first numeric part (here, 234) as the message id.
-        msg_id = int(parts[4]) + int(i)
+        # For URLs like https://t.me/unlockedskills/234/326,
+        # use the 6th element (index 5) as the message id (326)
+        msg_id = int(parts[5]) + int(i)
     else:
         msg_id = int(parts[-1]) + int(i)
     # ------------------------------------------
@@ -138,7 +138,6 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                             await devgaganin.pin()
                     await devgaganin.copy(LOG_GROUP)
                     await edit.delete()
-                    # No file downloaded in this branch—cleanup not needed.
                     return
             if not msg.media:
                 if msg.text:
@@ -172,7 +171,6 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                 progress_args=("╭─────────────────────╮\n│      **__Downloading by Crushe__...**\n├─────────────────────", edit, time.time()))
             # --- Updated File-Renaming Block ---
             custom_rename_tag = get_user_rename_preference(chatx)
-            # Detect if the media is truly a video
             is_video = False
             if msg.media == MessageMediaType.VIDEO:
                 is_video = True
@@ -196,7 +194,6 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                 original_file_name = str(file)
                 file_extension = 'mp4' if is_video else ''
 
-            # Apply delete & replacement words on the filename
             delete_words = load_delete_words(chatx)
             for word in delete_words:
                 original_file_name = original_file_name.replace(word, "")
@@ -401,7 +398,6 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                             attributes=[DocumentAttributeVideo(duration=duration, w=width, h=height, supports_streaming=True)],
                             thumb=thumb_path
                         )
-                    # In either branch, after upload, remove the file.
                     if os.path.exists(file):
                         os.remove(file)
                     file = None
@@ -529,7 +525,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         edit = await app.edit_message_text(sender, edit_id, "Cloning by Crushe...")
         try:
             parts = msg_link.split("/")
-            # If the URL has more than 5 parts, use the element at index 3 (the channel username)
+            # For non t.me/c links, if URL has more than 5 parts, use element at index 3 as the group name.
             if len(parts) > 5:
                 chat = parts[3]
             else:
@@ -553,6 +549,7 @@ async def copy_message_with_chat_id(client, sender, chat_id, message_id):
         for word, replace_word in replacements.items():
             final_caption = final_caption.replace(word, replace_word)
         caption = f"{final_caption}\n\n__**{custom_caption}**__" if custom_caption else f"{final_caption}"
+        # --- Modified branch: forward message if empty ---
         if msg.media:
             if msg.media == MessageMediaType.VIDEO:
                 result = await client.send_video(target_chat_id, msg.video.file_id, caption=caption)
@@ -561,9 +558,9 @@ async def copy_message_with_chat_id(client, sender, chat_id, message_id):
             elif msg.media == MessageMediaType.PHOTO:
                 result = await client.send_photo(target_chat_id, msg.photo.file_id, caption=caption)
             else:
-                result = await client.copy_message(target_chat_id, chat_id, message_id)
+                result = await client.forward_messages(target_chat_id, chat_id, message_id)
         else:
-            result = await client.copy_message(target_chat_id, chat_id, message_id)
+            result = await client.forward_messages(target_chat_id, chat_id, message_id)
         try:
             await result.copy(LOG_GROUP)
         except Exception:
