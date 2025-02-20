@@ -11,7 +11,7 @@ from telethon.tl.types import DocumentAttributeVideo
 import pymongo
 from pyrogram import Client, filters
 from pyrogram.errors import ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid, PeerIdInvalid
-from pyrogram.enums import MessageMediaType
+from pyrogram.enums import MessageMediaType, ParseMode
 from devgagan.core.func import progress_bar, video_metadata, screenshot, chk_user, progress_callback, prog_bar
 from devgagan.core.mongo import db
 from devgagan.modules.shrink import is_user_verified
@@ -24,6 +24,97 @@ import string
 from telethon import events, Button
 from io import BytesIO
 from SpyLib import fast_upload
+
+# ===================== NEW HELPER FUNCTIONS FROM SECOND CODE =====================
+
+# Download progress status updater
+async def downstatus(client: Client, statusfile, message):
+    while not os.path.exists(statusfile):
+        await asyncio.sleep(3)
+    while os.path.exists(statusfile):
+        with open(statusfile, "r") as downread:
+            txt = downread.read()
+        status_text = f"Downloaded : {txt}" if txt.strip() else "."
+        try:
+            await client.edit_message_text(message.chat.id, message.id, status_text)
+            await asyncio.sleep(10)
+        except Exception:
+            await asyncio.sleep(5)
+
+# Upload progress status updater
+async def upstatus(client: Client, statusfile, message):
+    while not os.path.exists(statusfile):
+        await asyncio.sleep(3)
+    while os.path.exists(statusfile):
+        with open(statusfile, "r") as upread:
+            txt = upread.read()
+        status_text = f"Uploaded : {txt}" if txt.strip() else "."
+        try:
+            await client.edit_message_text(message.chat.id, message.id, status_text)
+            await asyncio.sleep(10)
+        except Exception:
+            await asyncio.sleep(5)
+
+# Progress writer (writes progress percentage to a file)
+def progress(current, total, message, type):
+    with open(f'{message.id}{type}status.txt', "w") as fileup:
+        fileup.write(f"{current * 100 / total:.1f}%")
+# ===================== END NEW HELPER FUNCTIONS =====================
+
+# ===================== New function to handle public restricted messages =====================
+async def handle_public_restricted(client: Client, sender, chat_username, message_id):
+    """
+    For public groups (chat_id as string), manually download the message media with progress updates,
+    then reupload it.
+    """
+    try:
+        msg = await client.get_messages(chat_username, message_id)
+    except Exception as e:
+        await client.send_message(sender, f"Error retrieving message: {e}")
+        return
+
+    temp_msg = await client.send_message(sender, "Processing restricted content...")
+    down_status_file = f"{temp_msg.id}_downstatus.txt"
+    up_status_file = f"{temp_msg.id}_upstatus.txt"
+
+    down_task = asyncio.create_task(downstatus(client, down_status_file, temp_msg))
+    try:
+        file = await client.download_media(
+            msg,
+            progress=progress,
+            progress_args=[temp_msg, "down"]
+        )
+    except Exception as e:
+        await client.edit_message_text(sender, temp_msg.id, f"Download error: {e}")
+        return
+    finally:
+        if os.path.exists(down_status_file):
+            os.remove(down_status_file)
+        down_task.cancel()
+
+    up_task = asyncio.create_task(upstatus(client, up_status_file, temp_msg))
+    caption = msg.caption if msg.caption else ""
+    try:
+        if msg.media == MessageMediaType.VIDEO:
+            result = await client.send_video(sender, file, caption=caption, progress=progress, progress_args=[temp_msg, "up"])
+        elif msg.media == MessageMediaType.DOCUMENT:
+            result = await client.send_document(sender, file, caption=caption, progress=progress, progress_args=[temp_msg, "up"])
+        elif msg.media == MessageMediaType.PHOTO:
+            result = await client.send_photo(sender, file, caption=caption)
+        else:
+            result = await client.send_document(sender, file, caption=caption, progress=progress, progress_args=[temp_msg, "up"])
+    except Exception as e:
+        await client.edit_message_text(sender, temp_msg.id, f"Upload error: {e}")
+        return
+    finally:
+        if os.path.exists(up_status_file):
+            os.remove(up_status_file)
+        up_task.cancel()
+        await client.delete_messages(sender, [temp_msg.id])
+        if file and os.path.exists(file):
+            os.remove(file)
+    return result
+# ===================== End of handle_public_restricted =====================
 
 # ----------------- CHUNK SPLITTING FUNCTIONS -----------------
 MAX_CHUNK_SIZE = 2000 * 1024**2  # ~2GB
@@ -130,7 +221,8 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                 if msg.media == MessageMediaType.WEB_PAGE:
                     target_chat_id = user_chat_ids.get(chatx, chatx)
                     edit = await app.edit_message_text(sender, edit_id, "Cloning...")
-                    devgaganin = await app.send_message(target_chat_id, msg.text.markdown)
+                    # Send plain text without specifying parse_mode
+                    devgaganin = await app.send_message(target_chat_id, msg.text)
                     if msg.pinned_message:
                         try:
                             await devgaganin.pin(both_sides=True)
@@ -143,7 +235,8 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                 if msg.text:
                     target_chat_id = user_chat_ids.get(chatx, chatx)
                     edit = await app.edit_message_text(sender, edit_id, "Cloning...")
-                    devgaganin = await app.send_message(target_chat_id, msg.text.markdown)
+                    # Send plain text without specifying parse_mode
+                    devgaganin = await app.send_message(target_chat_id, msg.text)
                     if msg.pinned_message:
                         try:
                             await devgaganin.pin(both_sides=True)
@@ -168,7 +261,8 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             file = await userbot.download_media(
                 msg,
                 progress=progress_bar,
-                progress_args=("╭─────────────────────╮\n│      **__Downloading by Crushe__...**\n├─────────────────────", edit, time.time()))
+                progress_args=("╭─────────────────────╮\n│      **__Downloading by Crushe__...**\n├─────────────────────", edit, time.time())
+            )
             # --- Updated File-Renaming Block ---
             custom_rename_tag = get_user_rename_preference(chatx)
             is_video = False
@@ -525,7 +619,6 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         edit = await app.edit_message_text(sender, edit_id, "Cloning by Crushe...")
         try:
             parts = msg_link.split("/")
-            # For non t.me/c links, if URL has more than 5 parts, use element at index 3 as the group name.
             if len(parts) > 5:
                 chat = parts[3]
             else:
@@ -539,37 +632,23 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
 async def copy_message_with_chat_id(client, sender, chat_id, message_id):
     target_chat_id = user_chat_ids.get(sender, sender)
     try:
+        if isinstance(chat_id, str):
+            return await handle_public_restricted(client, sender, chat_id, message_id)
         msg = await client.get_messages(chat_id, message_id)
         custom_caption = get_user_caption_preference(sender)
         original_caption = msg.caption if msg.caption else (msg.text if msg.text else '')
         final_caption = f"{original_caption}\n\n__**{custom_caption}**__" if custom_caption else original_caption
-        # If chat_id is a string (i.e. a public group) use manual download & reupload
-        if isinstance(chat_id, str):
-            if msg.media:
-                file = await client.download_media(msg)
-                if msg.media == MessageMediaType.VIDEO:
-                    result = await client.send_video(target_chat_id, file, caption=final_caption)
-                elif msg.media == MessageMediaType.DOCUMENT:
-                    result = await client.send_document(target_chat_id, file, caption=final_caption)
-                elif msg.media == MessageMediaType.PHOTO:
-                    result = await client.send_photo(target_chat_id, file, caption=final_caption)
-                else:
-                    result = await client.send_document(target_chat_id, file, caption=final_caption)
-            else:
-                result = await client.send_message(target_chat_id, msg.text, parse_mode="markdown")
-        else:
-            # For private groups, use the original logic
-            if msg.media:
-                if msg.media == MessageMediaType.VIDEO:
-                    result = await client.send_video(target_chat_id, msg.video.file_id, caption=final_caption)
-                elif msg.media == MessageMediaType.DOCUMENT:
-                    result = await client.send_document(target_chat_id, msg.document.file_id, caption=final_caption)
-                elif msg.media == MessageMediaType.PHOTO:
-                    result = await client.send_photo(target_chat_id, msg.photo.file_id, caption=final_caption)
-                else:
-                    result = await client.forward_messages(target_chat_id, chat_id, message_id)
+        if msg.media:
+            if msg.media == MessageMediaType.VIDEO:
+                result = await client.send_video(target_chat_id, msg.video.file_id, caption=final_caption)
+            elif msg.media == MessageMediaType.DOCUMENT:
+                result = await client.send_document(target_chat_id, msg.document.file_id, caption=final_caption)
+            elif msg.media == MessageMediaType.PHOTO:
+                result = await client.send_photo(target_chat_id, msg.photo.file_id, caption=final_caption)
             else:
                 result = await client.forward_messages(target_chat_id, chat_id, message_id)
+        else:
+            result = await client.forward_messages(target_chat_id, chat_id, message_id)
         try:
             await result.copy(LOG_GROUP)
         except Exception:
@@ -659,7 +738,7 @@ async def settings_command(event):
         [Button.inline("Upload Method", b'uploadmethod')],
         [Button.url("Report Errors", "https://t.me/She_who_remain")]
     ]
-    await gf.send_file(event.chat_id, file=SET_PIC, caption=MESS, buttons=buttons)
+    await gf.send_file(event.chat.id, file=SET_PIC, caption=MESS, buttons=buttons)
 
 pending_photos = {}
 
@@ -793,7 +872,7 @@ async def handle_user_input(event):
             words_to_delete = event.message.text.split()
             delete_words = load_delete_words(user_id)
             delete_words.update(words_to_delete)
-            save_delete_words(user_id, delete_words)
+            save_replacement_words(user_id, delete_words)
             await event.respond(f"Words added to delete list: {', '.join(words_to_delete)}")
         del sessions[user_id]
 
