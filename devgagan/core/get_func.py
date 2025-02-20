@@ -520,7 +520,12 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     else:
         edit = await app.edit_message_text(sender, edit_id, "Cloning by Crushe...")
         try:
-            chat = msg_link.split("/")[-2]
+            parts = msg_link.split("/")
+            # If the URL has more than 5 parts, use the element at index 3 (the channel username)
+            if len(parts) > 5:
+                chat = parts[3]
+            else:
+                chat = parts[-2]
             await copy_message_with_chat_id(app, sender, chat, msg_id)
             await edit.delete()
         except Exception as e:
