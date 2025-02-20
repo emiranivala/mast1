@@ -87,7 +87,15 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     round_message = False
     if "?single" in msg_link:
         msg_link = msg_link.split("?single")[0]
-    msg_id = int(msg_link.split("/")[-1]) + int(i)
+    # ---- MODIFIED MESSAGE ID EXTRACTION ----
+    parts = msg_link.split("/")
+    if len(parts) == 6:
+        # For links like https://t.me/unlockedskills/234/326,
+        # use the first numeric part (here, 234) as the message id.
+        msg_id = int(parts[4]) + int(i)
+    else:
+        msg_id = int(parts[-1]) + int(i)
+    # ------------------------------------------
     saved_channel_ids = load_saved_channel_ids()
     if 't.me/c/' in msg_link or 't.me/b/' in msg_link:
         parts = msg_link.split("/")
